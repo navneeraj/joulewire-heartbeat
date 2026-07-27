@@ -1,4 +1,4 @@
-name: JouleWire production heartbeat
+name: JouleWire scheduled heartbeat
 
 on:
   schedule:
