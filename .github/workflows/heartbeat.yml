@@ -1,0 +1,72 @@
+name: JouleWire production heartbeat
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: joulewire-production-heartbeat
+  cancel-in-progress: false
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Run authenticated ingestion tick
+        env:
+          JOULEWIRE_REFRESH_TOKEN: ${{ secrets.JOULEWIRE_REFRESH_TOKEN }}
+          JOULEWIRE_URL: https://gridbrief-private.neoneo.chatgpt.site
+        shell: bash
+        run: |
+          set -euo pipefail
+          body="$(mktemp)"
+          status="$(
+            curl --silent --show-error \
+              --max-time 150 \
+              --output "$body" \
+              --write-out "%{http_code}" \
+              --request POST \
+              --header "x-joulewire-refresh-token: ${JOULEWIRE_REFRESH_TOKEN}" \
+              --header "x-joulewire-scheduler-id: github-fallback" \
+              --header "user-agent: JouleWire-GitHub-Fallback/1.0" \
+              "${JOULEWIRE_URL}/__joulewire/tick"
+          )"
+          if [[ "$status" -lt 200 || "$status" -ge 300 ]]; then
+            echo "::error title=GitHub fallback failed::Production tick returned HTTP ${status}."
+            head -c 500 "$body"
+            exit 1
+          fi
+          node - "$body" <<'NODE'
+          const fs = require("node:fs");
+          const payload = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const rows = new Map(
+            (payload.schedulerHeartbeats ?? []).map((row) => [row.scheduler_id, row]),
+          );
+          const remote = rows.get("github-fallback");
+          if (!remote?.last_success_at) {
+            console.error("::error title=GitHub fallback failed::Server did not record the remote scheduler heartbeat.");
+            process.exit(1);
+          }
+          const mac = rows.get("mac-primary");
+          const macAgeMinutes = mac?.last_success_at
+            ? Math.floor((Date.now() - Date.parse(mac.last_success_at)) / 60_000)
+            : null;
+          console.log(JSON.stringify({
+            schedulerId: payload.schedulerId,
+            refreshed: Boolean(payload.refreshed),
+            cycleComplete: Boolean(payload.cycleComplete),
+            candidateStories: Number(payload.candidateStories ?? 0),
+            remoteLastSuccessAt: remote.last_success_at,
+            macLastSuccessAt: mac?.last_success_at ?? null,
+            macAgeMinutes,
+          }));
+          if (macAgeMinutes === null || macAgeMinutes > 8) {
+            console.error(`::error title=Mac primary scheduler stale::GitHub failover succeeded, but the Mac scheduler last succeeded ${macAgeMinutes ?? "an unknown number of"} minutes ago.`);
+            process.exit(1);
+          }
+          NODE
