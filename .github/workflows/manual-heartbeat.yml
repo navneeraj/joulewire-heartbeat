@@ -1,8 +1,6 @@
-name: JouleWire scheduled heartbeat
+name: JouleWire emergency heartbeat
 
 on:
-  schedule:
-    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 permissions:
