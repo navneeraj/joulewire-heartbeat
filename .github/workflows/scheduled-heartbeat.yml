@@ -2,10 +2,7 @@ name: JouleWire scheduled heartbeat
 
 on:
   schedule:
-    # GitHub documents that common clock boundaries are the highest-load
-    # points for scheduled Actions. Stagger the five-minute fallback so it
-    # does not join the :00/:05/:10 thundering herd.
-    - cron: "2,7,12,17,22,27,32,37,42,47,52,57 * * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 permissions:
